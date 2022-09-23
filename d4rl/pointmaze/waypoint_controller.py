@@ -3,12 +3,12 @@ from d4rl.pointmaze import q_iteration
 from d4rl.pointmaze.gridcraft import grid_env
 from d4rl.pointmaze.gridcraft import grid_spec
 
-
 ZEROS = np.zeros((2,), dtype=np.float32)
 ONES = np.zeros((2,), dtype=np.float32)
 
 
 class WaypointController(object):
+
     def __init__(self, maze_str, solve_thresh=0.1, p_gain=10.0, d_gain=-1.0):
         self.maze_str = maze_str
         self._target = -1000 * ONES
@@ -27,10 +27,10 @@ class WaypointController(object):
     def current_waypoint(self):
         return self._waypoints[self._waypoint_idx]
 
-    def get_action(self, location, velocity, target):
-        if np.linalg.norm(self._target - np.array(self.gridify_state(target))) > 1e-3: 
+    def get_action(self, location, velocity, target, box=None):
+        if np.linalg.norm(self._target - np.array(self.gridify_state(target))) > 1e-3:
             #print('New target!', target, 'old:', self._target)
-            self._new_target(location, target)
+            self._new_target(location, target, box)
 
         dist = np.linalg.norm(location - self._target)
         vel = self._waypoint_prev_loc - location
@@ -47,9 +47,9 @@ class WaypointController(object):
         action = self.p_gain * prop + self.d_gain * velocity
 
         dist_next_wpnt = np.linalg.norm(location - next_wpnt)
-        if task_not_solved and (dist_next_wpnt < self.solve_thresh) and (vel_norm<self.vel_thresh):
+        if task_not_solved and (dist_next_wpnt < self.solve_thresh) and (vel_norm < self.vel_thresh):
             self._waypoint_idx += 1
-            if self._waypoint_idx == len(self._waypoints)-1:
+            if self._waypoint_idx == len(self._waypoints) - 1:
                 assert np.linalg.norm(self._waypoints[self._waypoint_idx] - self._target) <= self.solve_thresh
 
         self._waypoint_prev_loc = location
@@ -59,7 +59,7 @@ class WaypointController(object):
     def gridify_state(self, state):
         return (int(round(state[0])), int(round(state[1])))
 
-    def _new_target(self, start, target):
+    def _new_target(self, start, target, box=None):
         #print('Computing waypoints from %s to %s' % (start, target))
         start = self.gridify_state(start)
         start_idx = self.env.gs.xy_to_idx(start)
@@ -68,9 +68,20 @@ class WaypointController(object):
         self._waypoint_idx = 0
 
         self.env.gs[target] = grid_spec.REWARD
+
+        # add box
+        if box is not None:
+            for b in box:
+                b = self.gridify_state(b)
+                # self.env.gs[b] = grid_spec.LAVA
+                self.env.gs[b] = grid_spec.WALL
+
         q_values = q_iteration.q_iteration(env=self.env, num_itrs=200, discount=0.99)
 
-        if max(q_values[start_idx]) == 0:
+        # if max(q_values[start_idx]) == 0:
+        #     # no path between start and goal was found!
+        #     raise ValueError
+        if max(q_values[start_idx]) <= 0:
             # no path between start and goal was found!
             raise ValueError
 
@@ -85,12 +96,18 @@ class WaypointController(object):
 
             waypoint = self.env.gs.idx_to_xy(new_s)
             if new_s != target_idx:
-                waypoint = waypoint - np.random.uniform(size=(2,))*0.2
+                waypoint = waypoint - np.random.uniform(size=(2,)) * 0.2
             waypoints.append(waypoint)
             s = new_s
             if new_s == target_idx:
                 break
         self.env.gs[target] = grid_spec.EMPTY
+
+        if box is not None:
+            for b in box:
+                b = self.gridify_state(b)
+                self.env.gs[b] = grid_spec.EMPTY
+
         self._waypoints = waypoints
         self._waypoint_prev_loc = start
         self._target = target
@@ -105,11 +122,11 @@ if __name__ == "__main__":
             "#OOOO#\\"+\
             "######"
     controller = WaypointController(TEST_MAZE)
-    start = np.array((1,1), dtype=np.float32)
-    target = np.array((4,3), dtype=np.float32)
+    start = np.array((1, 1), dtype=np.float32)
+    target = np.array((4, 3), dtype=np.float32)
     act, done = controller.get_action(start, target)
     print('wpt:', controller._waypoints)
     print(act, done)
-    import pdb; pdb.set_trace()
+    import pdb
+    pdb.set_trace()
     pass
-
